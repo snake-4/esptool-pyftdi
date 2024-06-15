@@ -1,6 +1,8 @@
 from pyftdi.ftdi import Ftdi
 from pyftdi.serialext.protocol_ftdi import Serial as FtdiSerialFinalClass
 import sys
+import runpy
+import serial
 
 # FTDI AN_184
 IO_MAPPING = {
@@ -22,11 +24,6 @@ MAP_RTS_TO = IO_MAPPING["DTR"]
 
 # URL scheme: ftdi://[vendor[:product[:index|:serial]]]/interface
 OVERRIDE_URL = "ftdi:///1"
-
-# (True) esptool-pyftdi.py esptool chip_id
-# (False) esptool-pyftdi.py chip_id
-# Has to be True if ESPTOOL_WRAPPER is set
-SKIP_FIRST_ARG = True
 
 
 class CustomMappedFtdiSerial(FtdiSerialFinalClass):
@@ -122,34 +119,44 @@ def serial_for_url(url, *args, **kwargs):
     return instance
 
 
-def win32_ensure_usb_backend():
-    # Add script directory to PATH on Windows so that ctypes can find libusb
+def ensure_usb_backend_on_windows():
     import os
     import usb.backend.libusb1
 
-    os.environ["PATH"] += os.pathsep + os.path.dirname(os.path.abspath(__file__))
-    if usb.backend.libusb1.get_backend() == None:
-        sys.exit(
-            f"Libusb1 backend was not found! Make sure that libusb-1.0.dll is in the script's directory."
+    script_directory = os.path.dirname(os.path.abspath(__file__))
+    os.environ["PATH"] += os.pathsep + script_directory
+    if usb.backend.libusb1.get_backend() is None:
+        raise Exception(
+            "Libusb1 backend not found! Ensure libusb-1.0.dll is in the script's directory."
         )
 
 
-if __name__ == "__main__":
+def main():
     if len(sys.argv) < 2:
-        sys.exit(f"Usage: {sys.argv[0]} <esptool> [args...]")
+        print(f"Usage: {sys.argv[0]} <path to tool> [args...]")
+        return
+
+    tool_path = sys.argv[1]
+    if "idf_monitor" in tool_path:
+        module_name = "esp_idf_monitor"
+    elif "esptool" in tool_path:
+        module_name = "esptool"
+    else:
+        raise Exception(f'Unable to determine the module name for "{tool_path}"')
+
     print("esptool-pyftdi wrapper")
 
     if sys.platform == "win32":
-        win32_ensure_usb_backend()
+        ensure_usb_backend_on_windows()
 
+    sys.argv[1:] = sys.argv[2:]
+    serial.serial_for_url = serial_for_url
+    runpy.run_module(module_name, run_name="__main__")
+
+
+if __name__ == "__main__":
     try:
-        import esptool
-    except:
-        sys.exit(
-            "Esptool module could not be found. Make sure that the environment is correct."
-        )
-
-    if SKIP_FIRST_ARG:
-        sys.argv[1:] = sys.argv[2:]
-    esptool.loader.serial.serial_for_url = serial_for_url
-    esptool._main()
+        main()
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
